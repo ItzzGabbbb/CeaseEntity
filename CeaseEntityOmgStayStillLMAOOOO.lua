@@ -1,14 +1,38 @@
 getgenv().CeaseEncountered = getgenv().CeaseEncountered or false
 
----====== Load spawner ======---
+---====== Services ======---
 local spawner = loadstring(game:HttpGet("https://raw.githubusercontent.com/RegularVynixu/Utilities/main/Doors/Entity%20Spawner/V2/Source.lua"))()
-local RunService = game:GetService("RunService")
-local Plr = game.Players.LocalPlayer
 
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")
 local TweenService = game:GetService("TweenService")
 
----====== Blue Lighting System (LOCKED) ======---
+local Plr = Players.LocalPlayer
+
+---====== Detect Rush Moving ======---
+
+local function waitForRush()
+	for _, v in pairs(Workspace:GetDescendants()) do
+		if v.Name == "RushMoving" then
+			return
+		end
+	end
+
+	local found = false
+	local connection
+	connection = Workspace.DescendantAdded:Connect(function(obj)
+		if obj.Name == "RushMoving" then
+			found = true
+			connection:Disconnect()
+		end
+	end)
+
+	repeat task.wait() until found
+end
+
+---====== Blue Lighting ======---
 
 local saved = {}
 local lightingConnection
@@ -16,9 +40,7 @@ local lightingConnection
 local function makeBlue()
 	saved.Lighting = {
 		Ambient = Lighting.Ambient,
-		OutdoorAmbient = Lighting.OutdoorAmbient,
-		ColorShift_Top = Lighting.ColorShift_Top,
-		ColorShift_Bottom = Lighting.ColorShift_Bottom
+		OutdoorAmbient = Lighting.OutdoorAmbient
 	}
 
 	TweenService:Create(Lighting, TweenInfo.new(0.5), {
@@ -26,23 +48,9 @@ local function makeBlue()
 		OutdoorAmbient = Color3.fromRGB(0, 80, 255)
 	}):Play()
 
-	if Lighting:FindFirstChild("MainColorCorrection") then
-		TweenService:Create(Lighting.MainColorCorrection, TweenInfo.new(0.5), {
-			TintColor = Color3.fromRGB(0, 120, 255),
-			Contrast = 0.2
-		}):Play()
-	end
-
-	-- 🔒 lock lighting (prevents DOORS override)
 	lightingConnection = RunService.RenderStepped:Connect(function()
 		Lighting.Ambient = Color3.fromRGB(0, 80, 255)
 		Lighting.OutdoorAmbient = Color3.fromRGB(0, 80, 255)
-		Lighting.ColorShift_Top = Color3.fromRGB(0, 0, 0)
-		Lighting.ColorShift_Bottom = Color3.fromRGB(0, 0, 0)
-
-		if Lighting:FindFirstChild("MainColorCorrection") then
-			Lighting.MainColorCorrection.TintColor = Color3.fromRGB(0, 120, 255)
-		end
 	end)
 end
 
@@ -54,146 +62,129 @@ local function restoreLighting()
 	if saved.Lighting then
 		TweenService:Create(Lighting, TweenInfo.new(1), saved.Lighting):Play()
 	end
-
-	if Lighting:FindFirstChild("MainColorCorrection") then
-		TweenService:Create(Lighting.MainColorCorrection, TweenInfo.new(1), {
-			TintColor = Color3.fromRGB(255,255,255),
-			Contrast = 0
-		}):Play()
-	end
 end
 
-task.spawn(function()
-	makeBlue()
-	task.wait(7)
-	restoreLighting()
-end)
+---====== MAIN ENTITY FUNCTION ======---
 
-wait(0)
+local function spawnCease()
 
----====== Create entity ======---
+	-- start blue effect
+	task.spawn(function()
+		makeBlue()
+		task.wait(7)
+		restoreLighting()
+	end)
 
-local entity = spawner.Create({
-	Entity = {
-		Name = "Cease",
-		Asset = "rbxassetid://12262854624",
-		HeightOffset = 0
-	},
-	Lights = {
-		Flicker = { Enabled = false },
-		Shatter = false,
-		Repair = false
-	},
-	CameraShake = {
-		Enabled = false,
-		Range = 100,
-		Values = {1.5, 20, 0.1, 1}
-	},
-	Movement = {
-		Speed = 51.5,
-		Delay = 3.5,
-		Reversed = false
-	},
-	Rebounding = {
-		Enabled = false
-	},
-	Damage = {
-		Enabled = false,
-		Range = 40,
-		Amount = 125
-	},
-	Crucifixion = {
-		Enabled = false,
-		Range = 40,
-		Resist = true,
-		Break = true
-	},
-	Death = {
-		Type = "Guiding",
-		Hints = {
-			"You died to Cease...",
-			"It's Technique is to spawn after rush.",
-			"The lights turn blue when hes coming.",
-			"He senses every movement, so stay still until he's gone!"
+	wait(0)
+
+	local entity = spawner.Create({
+		Entity = {
+			Name = "Cease",
+			Asset = "rbxassetid://12262854624",
+			HeightOffset = 0
 		},
-		Cause = "Cease"
-	}
-})
+		Lights = {
+			Flicker = { Enabled = false },
+			Shatter = false,
+			Repair = false
+		},
+		CameraShake = {
+			Enabled = false
+		},
+		Movement = {
+			Speed = 51.5,
+			Delay = 3.5,
+			Reversed = false
+		},
+		Rebounding = {
+			Enabled = false
+		},
+		Damage = {
+			Enabled = false
+		},
+		Crucifixion = {
+			Enabled = false,
+			Resist = true,
+			Break = true
+		},
+		Death = {
+			Type = "Guiding",
+			Hints = {
+				"You died to Cease..",
+				"He appears after Rush...",
+				"Stand still when the room turns blue.",
+				"If you move, you die."
+			},
+			Cause = "Cease"
+		}
+	})
 
----====== Movement Kill Logic ======---
+	--- Movement Kill ---
+	local movementConnection
 
-local movementConnection
+	entity:SetCallback("OnStartMoving", function()
+		movementConnection = RunService.Heartbeat:Connect(function()
+			local char = Plr.Character
+			local entModel = entity.Model
 
-entity:SetCallback("OnStartMoving", function()
-	print("Cease is moving - Stay still!")
+			if char and char:FindFirstChild("Humanoid") and entModel and entModel.PrimaryPart then
+				local root = char:FindFirstChild("HumanoidRootPart")
+				local hum = char.Humanoid
 
-	movementConnection = RunService.Heartbeat:Connect(function()
-		local char = Plr.Character
-		local entModel = entity.Model
+				if root then
+					local dist = (root.Position - entModel.PrimaryPart.Position).Magnitude
 
-		if char and char:FindFirstChild("Humanoid") and entModel and entModel.PrimaryPart then
-			local hud = char.Humanoid
-			local root = char:FindFirstChild("HumanoidRootPart")
+					if dist <= 45 and hum.MoveDirection.Magnitude > 0 then
+						hum.Health = 0
 
-			if root then
-				local dist = (root.Position - entModel.PrimaryPart.Position).Magnitude
-
-				if dist <= 45 and hud.MoveDirection.Magnitude > 0 then
-					hud.Health = 0
-
-					if game.ReplicatedStorage:FindFirstChild("GameStats") then
 						game.ReplicatedStorage.GameStats["Player_".. Plr.Name].Total.DeathCause.Value = "Cease"
 					end
 				end
 			end
+		end)
+	end)
+
+	entity:SetCallback("OnDespawning", function()
+		if movementConnection then
+			movementConnection:Disconnect()
 		end
 	end)
-end)
 
----====== Debug callbacks ======---
+	entity:SetCallback("OnDespawned", function()
+		-- one-time achievement
+		if not getgenv().CeaseEncountered then
+			local player = Players.LocalPlayer
 
-entity:SetCallback("OnSpawned", function()
-	print("Entity has spawned")
-end)
+			if player.Character and player.Character:FindFirstChild("Humanoid") then
+				if player.Character.Humanoid.Health > 0 then
+					
+					getgenv().CeaseEncountered = true
 
-entity:SetCallback("OnReachedNode", function() end)
+					local achievementGiver = loadstring(game:HttpGet("https://raw.githubusercontent.com/Voor-Pr00/Achivements/refs/heads/main/Voorpr0"))()
 
-entity:SetCallback("OnLookAt", function(lineOfSight)
-	if lineOfSight then
-		print("Player is looking at entity")
-	end
-end)
-
-entity:SetCallback("OnDespawning", function()
-	if movementConnection then
-		movementConnection:Disconnect()
-	end
-end)
-
-entity:SetCallback("OnDespawned", function()
-	print("Entity has despawned")
-
-	-- ✅ ONE-TIME ACHIEVEMENT
-	if not getgenv().CeaseEncountered then
-		local player = game.Players.LocalPlayer
-
-		if player.Character and player.Character:FindFirstChild("Humanoid") then
-			if player.Character.Humanoid.Health > 0 then
-				
-				getgenv().CeaseEncountered = true
-
-				local achievementGiver = loadstring(game:HttpGet("https://raw.githubusercontent.com/Voor-Pr00/Achivements/refs/heads/main/Voorpr0"))()
-
-				achievementGiver({
-					Title = "Dont Move",
-					Desc = "Stay still for your life!",
-					Reason = "Encounter Cease.",
-					Image = "rbxassetid://120836589172474"
-				})
+					achievementGiver({
+						Title = "Dont Move",
+						Desc = "Stay still for your life!",
+						Reason = "Encounter Cease.",
+						Image = "rbxassetid://120836589172474"
+					})
+				end
 			end
 		end
-	end
-end)
+	end)
 
----====== Run entity ======---
-entity:Run()
+	entity:Run()
+end
+
+---====== FLOW ======---
+
+task.spawn(function()
+	waitForRush()
+
+	local delayTime = math.random(10, 40)
+	print("Cease spawning in:", delayTime)
+
+	task.wait(delayTime)
+
+	spawnCease()
+end)
